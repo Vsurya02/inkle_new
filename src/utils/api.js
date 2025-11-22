@@ -1,6 +1,93 @@
 /**
+ * Check if geocoding result is valid and matches the input location
+ */
+function isValidLocationMatch(inputLocation, geocodingResult) {
+  if (!geocodingResult || !geocodingResult.displayName) {
+    return false;
+  }
+  
+  const inputLower = inputLocation.toLowerCase().trim();
+  const displayNameLower = geocodingResult.displayName.toLowerCase();
+  
+  // Extract the main location name (first part before comma)
+  const mainLocation = displayNameLower.split(',')[0].trim();
+  
+  // Check if input is very short (less than 4 characters) - require stricter matching
+  if (inputLower.length < 4) {
+    // For very short inputs, require high similarity (at least 80%)
+    const similarity = calculateSimilarity(inputLower, mainLocation);
+    if (similarity < 0.8) {
+      return false;
+    }
+    // Also check if it's an exact substring match
+    if (!mainLocation.includes(inputLower) && !inputLower.includes(mainLocation)) {
+      return false;
+    }
+  }
+  
+  // Check if the main location name contains the input or vice versa
+  const containsMatch = mainLocation.includes(inputLower) || inputLower.includes(mainLocation);
+  
+  // Calculate similarity score
+  const similarity = calculateSimilarity(inputLower, mainLocation);
+  
+  // For inputs 4+ characters, require either containment or high similarity (at least 65%)
+  // For shorter inputs, we already handled above
+  if (inputLower.length >= 4) {
+    return containsMatch || similarity >= 0.65;
+  }
+  
+  // For very short inputs, we already validated above
+  return true;
+}
+
+/**
+ * Calculate similarity between two strings (simple Levenshtein-based)
+ */
+function calculateSimilarity(str1, str2) {
+  const longer = str1.length > str2.length ? str1 : str2;
+  const shorter = str1.length > str2.length ? str2 : str1;
+  
+  if (longer.length === 0) return 1.0;
+  
+  const distance = levenshteinDistance(longer, shorter);
+  return (longer.length - distance) / longer.length;
+}
+
+/**
+ * Calculate Levenshtein distance between two strings
+ */
+function levenshteinDistance(str1, str2) {
+  const matrix = [];
+  
+  for (let i = 0; i <= str2.length; i++) {
+    matrix[i] = [i];
+  }
+  
+  for (let j = 0; j <= str1.length; j++) {
+    matrix[0][j] = j;
+  }
+  
+  for (let i = 1; i <= str2.length; i++) {
+    for (let j = 1; j <= str1.length; j++) {
+      if (str2.charAt(i - 1) === str1.charAt(j - 1)) {
+        matrix[i][j] = matrix[i - 1][j - 1];
+      } else {
+        matrix[i][j] = Math.min(
+          matrix[i - 1][j - 1] + 1,
+          matrix[i][j - 1] + 1,
+          matrix[i - 1][j] + 1
+        );
+      }
+    }
+  }
+  
+  return matrix[str2.length][str1.length];
+}
+
+/**
  * Nominatim Geocoding API
- * Geocodes location names to coordinates
+ * Geocodes location names to coordinates with validation
  */
 export async function geocodeLocation(location) {
   try {
@@ -23,10 +110,35 @@ export async function geocodeLocation(location) {
       return null;
     }
     
-    return {
+    const result = {
       lat: parseFloat(data[0].lat),
       lon: parseFloat(data[0].lon),
-      displayName: data[0].display_name
+      displayName: data[0].display_name,
+      importance: data[0].importance || 0,
+      type: data[0].type || ''
+    };
+    
+    // Validate that the result actually matches the input location
+    if (!isValidLocationMatch(location, result)) {
+      return null;
+    }
+    
+    // For very low importance scores or short inputs, be more strict (likely false positives)
+    // Importance score ranges from 0 to 1, where 1 is most important
+    if (location.length < 4) {
+      // For short inputs (like "xyr"), require higher importance (at least 0.4)
+      if (result.importance < 0.4) {
+        return null;
+      }
+    } else if (result.importance < 0.2) {
+      // For longer inputs, still reject very low importance results
+      return null;
+    }
+    
+    return {
+      lat: result.lat,
+      lon: result.lon,
+      displayName: result.displayName
     };
   } catch (error) {
     console.error('Geocoding error:', error);

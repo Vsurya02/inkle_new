@@ -31,6 +31,27 @@ function analyzeIntent(userInput) {
 }
 
 /**
+ * Calculate similarity between two location strings
+ */
+function calculateLocationSimilarity(str1, str2) {
+  const longer = str1.length > str2.length ? str1 : str2;
+  const shorter = str1.length > str2.length ? str2 : str1;
+  
+  if (longer.length === 0) return 1.0;
+  
+  // Simple similarity: check if one contains the other
+  if (longer.includes(shorter)) return 0.9;
+  
+  // Count matching characters
+  let matches = 0;
+  for (let i = 0; i < shorter.length; i++) {
+    if (longer.includes(shorter[i])) matches++;
+  }
+  
+  return matches / longer.length;
+}
+
+/**
  * Enhanced location extraction from user input
  */
 function extractLocation(userInput) {
@@ -215,9 +236,25 @@ export async function parentAgent(userInput, claudeApiKey = null) {
       if (!geoData) {
         return {
           success: false,
-          error: "I don't know if this place exists. Could you please verify the location name?",
+          error: `I'm sorry, but I don't recognize "${potentialLocation}" as a valid location. It's possible this place doesn't exist in my database, or there might be a spelling error. Could you please double-check the location name and try again? You might want to try using the city's official name or a more common spelling.`,
           location: potentialLocation
         };
+      }
+      
+      // Additional validation: Check if the returned location makes sense
+      const returnedLocation = geoData.displayName.split(',')[0].toLowerCase();
+      const inputLocation = potentialLocation.toLowerCase().trim();
+      
+      // If the input is very short (less than 3 chars) and doesn't match well, reject it
+      if (inputLocation.length < 3) {
+        const similarity = calculateLocationSimilarity(inputLocation, returnedLocation);
+        if (similarity < 0.7) {
+          return {
+            success: false,
+            error: `I'm sorry, but I don't recognize "${potentialLocation}" as a valid location. It's possible this place doesn't exist in my database, or there might be a spelling error. Could you please double-check the location name and try again? You might want to try using the city's official name or a more common spelling.`,
+            location: potentialLocation
+          };
+        }
       }
       
       validatedLocation = geoData.displayName.split(',')[0];
